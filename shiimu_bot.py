@@ -76,10 +76,6 @@ async def shiimu(ctx):
 import os
 from dotenv import load_dotenv
 
-# .envの読み込み
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
-
-# 省略：bot の設定など
-
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 bot.run(TOKEN)
