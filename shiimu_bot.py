@@ -2,76 +2,89 @@ import discord
 from discord.ext import commands
 from discord.ui import Button, View
 import random
+import os
+from dotenv import load_dotenv
 
+# 環境変数の読み込み
+load_dotenv()
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
+# Botの基本設定
 intents = discord.Intents.default()
 intents.message_content = True
-intents.reactions = True
+intents.voice_states = True
 intents.members = True
-
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-roles = ["デュエリスト", "イニシエーター", "コントローラー", "センチネル", "フレックス"]
-animal_emojis = ["🐶", "🐱", "🐭", "🐹", "🐼"]
-joined_users = []
+# 役職リスト
+roles_base = ["デュエリスト", "イニシエーター", "コントローラー", "センチネル"]
+extra_roles = ["フレックス", "コーチ"]
 
-class ResultButtonView(View):
-    def __init__(self, ctx):
+# 役職と色絵文字の対応表
+role_emojis = {
+    "デュエリスト": "🔴",
+    "イニシエーター": "🟢",
+    "コントローラー": "🔵",
+    "センチネル": "🟡",
+    "フレックス": "⚪",
+    "コーチ": "🎓"
+}
+
+class AssignRolesButtonView(View):
+    def __init__(self, ctx, vc_members):
         super().__init__(timeout=None)
         self.ctx = ctx
+        self.vc_members = vc_members
         self.results_shown = False
 
-    @discord.ui.button(label="🎲結果を表示する", style=discord.ButtonStyle.primary)
-    async def show_results(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="🎲START🎲", style=discord.ButtonStyle.success)
+    async def start_assigning(self, interaction: discord.Interaction, button: Button):
         if self.results_shown:
-            await interaction.response.send_message("もう結果は表示されたよ！", ephemeral=True)
+            await interaction.response.send_message("もう結果は表示されてるよ！", ephemeral=True)
             return
 
         self.results_shown = True
-        random.shuffle(roles)
-        result_msg = "**🎮 担当発表 🎮**\n"
-        for user, role in zip(joined_users, roles):
-            result_msg += f"{user.mention} の担当は **{role}** です！\n"
+
+        member_count = len(self.vc_members)
+        selected_roles = []
+
+        if member_count == 1:
+            selected_roles = ["フレックス"]
+        elif member_count == 2:
+            selected_roles = random.sample(roles_base, 2)
+        elif member_count == 3:
+            selected_roles = random.sample(roles_base, 3)
+        elif member_count == 4:
+            selected_roles = roles_base.copy()
+        elif member_count == 5:
+            selected_roles = roles_base + ["フレックス"]
+        elif member_count == 6:
+            selected_roles = roles_base + extra_roles
+        else:
+            await interaction.response.send_message("❌ 人数が多すぎます！7人以上には対応していません。", ephemeral=True)
+            return
+
+        # メッセージ作成
+        result_msg = "**🎮 役割発表 🎮**\n"
+        for member, role in zip(self.vc_members, selected_roles):
+            emoji = role_emojis.get(role, "")
+            result_msg += f"{member.mention} ➔ {emoji} **{role}**\n"
+
         await interaction.response.send_message(result_msg)
 
 @bot.command()
 async def shiimu(ctx):
-    global joined_users
-    joined_users = []  # 初期化
+    if ctx.author.voice and ctx.author.voice.channel:
+        vc = ctx.author.voice.channel
+        vc_members = [member for member in vc.members if not member.bot]
 
-    msg = await ctx.send(
-        "全部表示されてから、好きな動物をクリックしてリアクションして参加してね！\n"
-        "人が選んだ動物を選らんでしまうとエラーになっちゃうよ！\n"
-        "参加者が揃ったら ボタンで結果を表示してね！"
-    )
+        if not vc_members:
+            await ctx.send("ボイスチャンネルに誰もいないよ！")
+            return
 
-    for emoji in animal_emojis:
-        await msg.add_reaction(emoji)
-
-    view = ResultButtonView(ctx)
-    await ctx.send(view=view)
-
-    def check(reaction, user):
-        return (
-            user != bot.user and
-            reaction.message.id == msg.id and
-            user not in joined_users and
-            str(reaction.emoji) in animal_emojis
-        )
-
-    while len(joined_users) < 5:
-        try:
-            reaction, user = await bot.wait_for("reaction_add", timeout=300.0, check=check)
-            joined_users.append(user)
-        except:
-            break  # タイムアウトなどで抜ける
-
-    if len(joined_users) == 5 and not view.results_shown:
-        view.results_shown = True
-        random.shuffle(roles)
-        result_msg = "**🎮 担当発表 🎮**\n"
-        for user, role in zip(joined_users, roles):
-            result_msg += f"{user.mention} の担当は **{role}** です！\n"
-        await ctx.send(result_msg)
+        await ctx.send("🎮 ボイスチャンネルの人数を確認したよ！\n🎲START🎲 ボタンを押して役割を決めよう！", view=AssignRolesButtonView(ctx, vc_members))
+    else:
+        await ctx.send("まずボイスチャンネルに参加してね！")
 
 import os
 from dotenv import load_dotenv
