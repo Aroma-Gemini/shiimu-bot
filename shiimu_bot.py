@@ -5,86 +5,102 @@ import random
 import os
 from dotenv import load_dotenv
 
-# 環境変数の読み込み
+# .envからトークンを読み込む
 load_dotenv()
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-# Botの基本設定
+# 色をつける関数
+def get_colored_role(role):
+    color_map = {
+        "デュエリスト": "🔴 **デュエリスト**",
+        "イニシエーター": "🟢 **イニシエーター**",
+        "コントローラー": "🔵 **コントローラー**",
+        "センチネル": "🟡 **センチネル**",
+        "フレックス": "⚪ **フレックス**"
+    }
+    return color_map.get(role, role)
+
+# Bot設定
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
+intents.guilds = True
 intents.members = True
-bot = commands.Bot(command_prefix='!', intents=intents)
 
-# 役職リスト
-roles_base = ["デュエリスト", "イニシエーター", "コントローラー", "センチネル"]
-extra_roles = ["フレックス", "コーチ"]
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 役職と色絵文字の対応表
-role_emojis = {
-    "デュエリスト": "🔴",
-    "イニシエーター": "🟢",
-    "コントローラー": "🔵",
-    "センチネル": "🟡",
-    "フレックス": "⚪",
-    "コーチ": "🎓"
-}
+# 配置する役職
+roles_basic = ["デュエリスト", "イニシエーター", "コントローラー", "センチネル"]
+roles_flex = roles_basic + ["フレックス"]
 
-class AssignRolesButtonView(View):
-    def __init__(self, ctx, vc_members):
+class StartButtonView(View):
+    def __init__(self, ctx, voice_members):
         super().__init__(timeout=None)
         self.ctx = ctx
-        self.vc_members = vc_members
-        self.results_shown = False
+        self.voice_members = voice_members
 
     @discord.ui.button(label="🎲START🎲", style=discord.ButtonStyle.success)
-    async def start_assigning(self, interaction: discord.Interaction, button: Button):
-        if self.results_shown:
-            await interaction.response.send_message("もう結果は表示されてるよ！", ephemeral=True)
+    async def start(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.voice is None:
+            await interaction.response.send_message("ボイスチャンネルに参加していないと使えません！", ephemeral=True)
             return
 
-        self.results_shown = True
-
-        member_count = len(self.vc_members)
-        selected_roles = []
+        # ボイスチャンネルにいる人数を数える
+        member_count = len(self.voice_members)
 
         if member_count == 1:
-            selected_roles = ["フレックス"]
-        elif member_count == 2:
-            selected_roles = random.sample(roles_base, 2)
-        elif member_count == 3:
-            selected_roles = random.sample(roles_base, 3)
-        elif member_count == 4:
-            selected_roles = roles_base.copy()
+            roles = [get_colored_role("フレックス")]
+            members = list(self.voice_members)
+            text = f"{members[0].mention} ➔ {roles[0]}"
+            await interaction.response.send_message(f"🎲 1人プレイ\n{text}")
+
+        elif 2 <= member_count <= 4:
+            selected_roles = random.sample(roles_basic, member_count)
+            members = list(self.voice_members)
+            random.shuffle(members)
+            text = "\n".join(f"{m.mention} ➔ {get_colored_role(r)}" for m, r in zip(members, selected_roles))
+            await interaction.response.send_message(f"🎲 {member_count}人プレイ\n{text}")
+
         elif member_count == 5:
-            selected_roles = roles_base + ["フレックス"]
-        elif member_count == 6:
-            selected_roles = roles_base + extra_roles
+            selected_roles = random.sample(roles_flex, 5)
+            members = list(self.voice_members)
+            random.shuffle(members)
+            text = "\n".join(f"{m.mention} ➔ {get_colored_role(r)}" for m, r in zip(members, selected_roles))
+            await interaction.response.send_message(f"🎲 5人プレイ\n{text}")
+
+        elif 6 <= member_count <= 9:
+            await interaction.response.send_message("⚠ プレイできる人数ではありません！")
+
+        elif member_count == 10:
+            team_members = list(self.voice_members)
+            random.shuffle(team_members)
+
+            team_a = team_members[:5]
+            team_b = team_members[5:]
+
+            selected_roles_a = random.sample(roles_flex, 5)
+            selected_roles_b = random.sample(roles_flex, 5)
+
+            team_a_text = "\n".join(f"{m.mention} ➔ {get_colored_role(r)}" for m, r in zip(team_a, selected_roles_a))
+            team_b_text = "\n".join(f"{m.mention} ➔ {get_colored_role(r)}" for m, r in zip(team_b, selected_roles_b))
+
+            await interaction.response.send_message(f"🎲 10人プレイ\n\n**Aチーム**\n{team_a_text}\n\n**Bチーム**\n{team_b_text}")
+
         else:
-            await interaction.response.send_message("❌ 人数が多すぎます！7人以上には対応していません。", ephemeral=True)
-            return
+            await interaction.response.send_message("⚠ 人数が多すぎます！")
 
-        # メッセージ作成
-        result_msg = "**🎮 役割発表 🎮**\n"
-        for member, role in zip(self.vc_members, selected_roles):
-            emoji = role_emojis.get(role, "")
-            result_msg += f"{member.mention} ➔ {emoji} **{role}**\n"
-
-        await interaction.response.send_message(result_msg)
-
+# !shiimu コマンド
 @bot.command()
 async def shiimu(ctx):
-    if ctx.author.voice and ctx.author.voice.channel:
-        vc = ctx.author.voice.channel
-        vc_members = [member for member in vc.members if not member.bot]
+    if ctx.author.voice is None or ctx.author.voice.channel is None:
+        await ctx.send("ボイスチャンネルに参加してからコマンドを使ってください！")
+        return
 
-        if not vc_members:
-            await ctx.send("ボイスチャンネルに誰もいないよ！")
-            return
+    voice_channel = ctx.author.voice.channel
+    voice_members = voice_channel.members
 
-        await ctx.send("🎮 ボイスチャンネルの人数を確認したよ！\n🎲START🎲 ボタンを押して役割を決めよう！", view=AssignRolesButtonView(ctx, vc_members))
-    else:
-        await ctx.send("まずボイスチャンネルに参加してね！")
+    view = StartButtonView(ctx, voice_members)
+    await ctx.send("🎲START🎲ボタンを押して役割を振り分けましょう！", view=view)
+
 
 import os
 from dotenv import load_dotenv
