@@ -1,86 +1,118 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View
+from discord import app_commands
+from discord.ui import Button, View, Modal, TextInput
 import random
 import os
 from dotenv import load_dotenv
 
-# .envからトークンを読み込む
 load_dotenv()
 
-# 色付き役割変換
-def get_colored_role(role):
-    color_map = {
-        "デュエリスト": "🔴 **デュエリスト**",
-        "イニシエーター": "🟢 **イニシエーター**",
-        "コントローラー": "🔵 **コントローラー**",
-        "センチネル": "🟡 **センチネル**",
-        "フレックス": "⚪ **フレックス**"
-    }
-    return color_map.get(role, role)
-
-# Bot設定
+TOKEN = os.getenv("DISCORD_TOKEN")
 intents = discord.Intents.default()
+intents.voice_states = True
+intents.members = True
 intents.message_content = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 配置する役職
-roles_basic = ["デュエリスト", "イニシエーター", "コントローラー", "センチネル"]
-roles_flex = roles_basic + ["フレックス"]
+roles = {
+    "デュエリスト": discord.Color.red(),
+    "イニシエーター": discord.Color.green(),
+    "コントローラー": discord.Color.blue(),
+    "センチネル": discord.Color.yellow(),
+    "フレックス": discord.Color.light_grey()
+}
 
-class StartButtonView(View):
-    def __init__(self, ctx, player_count):
-        super().__init__(timeout=None)
-        self.ctx = ctx
-        self.player_count = player_count
+class NumberInputModal(Modal, title="人数を入力してください"):
+    number = TextInput(label="人数", placeholder="1～10", required=True)
 
-    @discord.ui.button(label="🎲START🎲", style=discord.ButtonStyle.success)
-    async def start(self, interaction: discord.Interaction, button: Button):
-        if interaction.user != self.ctx.author:
-            await interaction.response.send_message("このボタンはコマンドを使った人専用です！", ephemeral=True)
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            self.number_value = int(self.number.value)
+        except ValueError:
+            await interaction.response.send_message("数字を入力してね！", ephemeral=True)
             return
 
-        player_count = self.player_count
+        if self.number_value < 1 or self.number_value > 10:
+            await interaction.response.send_message("1〜10人の間で入力してね！", ephemeral=True)
+            return
 
-        if player_count == 1:
-            roles = [get_colored_role("フレックス")]
-            text = f"プレイヤー ➔ {roles[0]}"
-            await interaction.response.send_message(f"🎲 1人プレイ\n{text}")
+        view = StartButtonView(self.number_value)
+        await interaction.response.send_message("人数設定完了！🎲START🎲ボタンを押してね！", view=view, ephemeral=True)
 
-        elif 2 <= player_count <= 4:
-            selected_roles = random.sample(roles_basic, player_count)
-            text = "\n".join(f"プレイヤー{idx+1} ➔ {get_colored_role(role)}" for idx, role in enumerate(selected_roles))
-            await interaction.response.send_message(f"🎲 {player_count}人プレイ\n{text}")
+class StartButtonView(View):
+    def __init__(self, number_value):
+        super().__init__(timeout=None)
+        self.number_value = number_value
 
-        elif player_count == 5:
-            selected_roles = random.sample(roles_flex, 5)
-            text = "\n".join(f"プレイヤー{idx+1} ➔ {get_colored_role(role)}" for idx, role in enumerate(selected_roles))
-            await interaction.response.send_message(f"🎲 5人プレイ\n{text}")
+    @discord.ui.button(label="🎲START🎲", style=discord.ButtonStyle.primary)
+    async def start(self, interaction: discord.Interaction, button: Button):
+        vc = interaction.guild.voice_client
+        voice_channel = None
+        for vc in interaction.guild.voice_channels:
+            if interaction.user in vc.members:
+                voice_channel = vc
+                break
 
-        elif 6 <= player_count <= 9:
-            await interaction.response.send_message("⚠ プレイできる人数ではありません！")
+        if not voice_channel:
+            await interaction.response.send_message("あなたはボイスチャンネルにいないよ！", ephemeral=True)
+            return
 
-        elif player_count == 10:
-            selected_roles = random.sample(roles_flex, 5)
-            selected_roles_b = random.sample(roles_flex, 5)
+        members = [member for member in voice_channel.members if not member.bot]
 
-            team_a_text = "\n".join(f"Aチーム プレイヤー{idx+1} ➔ {get_colored_role(role)}" for idx, role in enumerate(selected_roles))
-            team_b_text = "\n".join(f"Bチーム プレイヤー{idx+1} ➔ {get_colored_role(role)}" for idx, role in enumerate(selected_roles_b))
-
-            await interaction.response.send_message(f"🎲 10人プレイ\n\n{team_a_text}\n\n{team_b_text}")
-
+        if len(members) < self.number_value:
+            # 人数少ない場合はそのまま指定人数だけ選ぶ
+            selected_members = random.sample(members, len(members))
+        elif len(members) == self.number_value:
+            selected_members = members
         else:
-            await interaction.response.send_message("⚠ 人数が多すぎます！")
+            await interaction.response.send_message("人数が合わないよ！", ephemeral=True)
+            return
 
-# !shiimu コマンド
+        result = ""
+
+        if self.number_value == 1:
+            role_list = ["フレックス"]
+        elif self.number_value in [2, 3, 4]:
+            role_list = random.sample(["デュエリスト", "イニシエーター", "コントローラー", "センチネル"], k=self.number_value)
+        elif self.number_value == 5:
+            role_list = random.sample(["デュエリスト", "イニシエーター", "コントローラー", "センチネル", "フレックス"], k=5)
+        elif 6 <= self.number_value <= 9:
+            await interaction.response.send_message("プレイ出来る人数ではありません！", ephemeral=True)
+            return
+        elif self.number_value == 10:
+            random.shuffle(members)
+            team_a = members[:5]
+            team_b = members[5:]
+
+            roles_list = ["デュエリスト", "イニシエーター", "コントローラー", "センチネル", "フレックス"]
+
+            result += "**Aチーム**\n"
+            for member, role in zip(team_a, roles_list):
+                result += f"{member.mention} → `{role}`\n"
+
+            result += "\n**Bチーム**\n"
+            for member, role in zip(team_b, roles_list):
+                result += f"{member.mention} → `{role}`\n"
+
+            await interaction.response.send_message(result)
+            return
+        else:
+            await interaction.response.send_message("人数が多すぎます！", ephemeral=True)
+            return
+
+        # 通常表示
+        for member, role in zip(selected_members, role_list):
+            color = roles[role]
+            result += f"{member.mention} → `{role}`\n"
+
+        await interaction.response.send_message(result)
+
 @bot.command()
-async def shiimu(ctx, player_count: int):
-    if player_count < 1:
-        await ctx.send("人数は1人以上を入力してください！")
-        return
-
-    view = StartButtonView(ctx, player_count)
-    await ctx.send(f"🎲 {player_count}人でスタートする準備ができました！ボタンを押してね！", view=view)
+async def shiimu(ctx):
+    modal = NumberInputModal()
+    await ctx.send_modal(modal)
 
 import os
 from dotenv import load_dotenv
